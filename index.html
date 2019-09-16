@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <title>Adding Audio Samples</title>
+    <link href="../css/bootstrap.min.css" rel="stylesheet">
+    <script type="module" src="js/elusive-sample.js"></script>
+    <script type="text/javascript" src="js/Tone.js"></script>
+    <script src="js/lame.all.js"></script>
+    <style media="screen">
+      .hidden { display: none;}
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Full-Length Audio to 30 Second Audio Sample Converter</h1>
+      <p>Michael Bauchert created this utility to quickly convert full-length audio clips to 30 second snippets with crossfades at the beginning and end. Conversion and processing happens on the client side using <a href="https://tonejs.github.io/">Tone.js</a> to shorten the clips and crossfade the edges, and <a href="https://github.com/zhuker/lamejs">Lame.js</a> to convert the Tone.js audio buffers into mp3 files.</p>
+
+      <p><a href="">Check out the code for this utility on GitHub.</a></p>
+
+      <div class="input-group">
+        <div class="custom-file">
+          <input type="file" name="file-upload" class="custom-file-input" id="file-upload" aria-describedby="file-upload" accept="audio/*" multiple="true">
+          <label class="custom-file-label" for="file-upload">Choose file</label>
+        </div>
+      </div>
+      <br>
+      <!--list which files load into so the user can verify their selection-->
+      <ul class="list-group" id="file-list">
+        <!--<li class="list-group-item">Track 1</li>-->
+      </ul>
+
+      <br>
+
+      <!--Loading Spinner to indicate work being done after user selects files to convert-->
+      <div class="spinner-border hidden" role="status">
+        <span class="sr-only">Loading...</span>
+      </div>
+
+      <!--Input field for converted files name and button to begin the conversion process-->
+      <div class="input-group mb-3 hidden" id="get-sound-samples">
+        <input type="text" id="file-name" class="form-control" placeholder="Audio Sample File Name" aria-label="Audio Sample File Name" aria-describedby="button-addon2">
+        <div class="input-group-append">
+          <button class="btn btn-outline-secondary" type="button" id="button-addon2" onclick="getSoundSamples()">Convert to Sound Samples</button>
+        </div>
+      </div>
+
+      <!--progress bar to indicate the current status of the file conversion process-->
+      <div class="progress hidden" id="progress-container" style="height: 2rem">
+        <div class="progress-bar" id="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="25" aria-valuemin="0" aria-valuemax="100"></div>
+      </div>
+
+      <a id="download" style="display: none"></a>
+
+      <h1>Custom <strong>&lt;elusive-sample&gt;</strong> Component</h1>
+      <p>After the audio mp3 files are created and automatically downloaded to the user's computer, they are uploaded and referenced using the custom tag, <strong>&lt;elusive-sample&gt;</strong>, also created by Michael Bauchert. Check out how it works below or <a href="">check out what's under the hood on GitHub.</a></p>
+
+      <section id="selections">
+          <ul class="list-group" id="file-list">
+          <li class="list-group-item">Bells 1 <elusive-sample src="audio/01 bells.mp3"></elusive-sample></li>
+          <li class="list-group-item">Bells 2 <elusive-sample src="audio/02 bells.mp3"></elusive-sample></li>
+          <li class="list-group-item">Bells 3 <elusive-sample src="audio/03 bells.mp3"></elusive-sample></li>
+          <li class="list-group-item">Bells 4 <elusive-sample src="audio/04 bells.mp3"></elusive-sample></li>
+        </ul>
+      </section>
+
+    </div>
+    <script type="text/javascript">
+      const length = 30;//in seconds
+      const fadeLength = 3;//in seconds
+      const bitrate = 320;
+
+      const fileUploadButton = document.getElementById('file-upload');
+
+      const fileConvertProgress = document.getElementById('progress-bar');
+
+      fileUploadButton.addEventListener('change', function() {
+        document.getElementById('get-sound-samples').classList.add('hidden');
+        document.getElementById('file-list').classList.remove('hidden');
+        window.audioFiles = Array.from(fileUploadButton.files);
+
+        let fileListElement = document.getElementById('file-list');
+        fileListElement.innerHTML = '';
+
+        window.fileArray = [];
+        if(audioFiles) {
+          document.querySelector('.spinner-border').classList.remove('hidden');
+
+          for (var i = 0; i < audioFiles.length; i++) {
+            let file = audioFiles[i];
+            let newFile = document.createElement('li');
+            newFile.classList.add('list-group-item');
+            newFile.innerHTML = file.name;
+            fileListElement.appendChild(newFile);
+
+            getNewFile(i, file);
+          }
+        }
+      });
+
+    function getSoundSamples() {
+        document.getElementById('progress-container').classList.remove('hidden');
+        document.getElementById('get-sound-samples').classList.add('hidden');
+        document.getElementById('file-list').classList.add('hidden');
+
+        window.plusProgress = 100 / (window.fileArray.length * 3);
+
+        //resume the audio context on button press
+        Tone.context.resume();
+
+        //put all the buffers and filenames to convert into an array
+        let sampleBuffers = [];
+        for(let i = 0; i < window.fileArray.length; i++) {
+          const file = window.fileArray[i];
+          let fileName = window.audioFiles[i].name;
+          console.log(fileName);
+
+          incrementProgress();
+          //create a new buffer for each file
+          sampleBuffers.push([fileName, new Tone.Buffer(file)]);
+        }
+
+        //wait until all sample buffers are defined
+        Tone.Buffer.on('load', function() {
+          let crossfadePromises = [];
+          for(let i = 0; i < sampleBuffers.length; i++) {
+            //slice the buffer into a predetermined size
+            crossfadePromises[i] = new Promise(function(resolve, reject) {
+              sampleBuffers[i][1] = sampleBuffers[i][1].slice(sampleBuffers[i][1].duration/2, sampleBuffers[i][1].duration);
+              incrementProgress();
+
+              crossfadeEdges(resolve, sampleBuffers[i][0], sampleBuffers[i][1]);
+            });
+          }
+
+          Promise.all(crossfadePromises).then(function(buffer) {
+            for(let i = 0; i< buffer.length; i++) {
+              convertToMP3(buffer[i][0], buffer[i][1]);
+            }
+          });
+        });
+      }//end getSoundSamples
+
+      //put file into tone player
+      function getNewFile(index, file) {
+        const reader = new FileReader();
+
+        reader.onload = function(e) {
+          window.fileArray[index] = e.target.result;
+          if(window.audioFiles.length != 0 && window.audioFiles.length == window.fileArray.length) {
+            document.querySelector('.spinner-border').classList.add('hidden');
+            document.getElementById('get-sound-samples').classList.remove('hidden');
+          }
+        }
+
+        reader.readAsDataURL(file);
+      }//end getNewPlayer
+
+      function FloatArray2Int16 (floatbuffer) {
+        var int16Buffer = new Int16Array(floatbuffer.length);
+        for (var i = 0, len = floatbuffer.length; i < len; i++) {
+            if (floatbuffer[i] < 0) {
+                int16Buffer[i] = 0x8000 * floatbuffer[i];
+            } else {
+                int16Buffer[i] = 0x7FFF * floatbuffer[i];
+            }
+        }
+        return int16Buffer;
+      }
+
+      //download the new sample
+      function downloadMP3(url, fileName) {
+        fileName = fileName.substr(0, 2) + ' ' + document.getElementById('file-name').value.toLowerCase() + '.mp3';
+
+        const downloadElement = document.getElementById('download');
+
+        downloadElement.href = url;
+        downloadElement.download = fileName;
+        downloadElement.click();
+        window.URL.revokeObjectURL(url);
+      }//end downloadMP3
+
+      function incrementProgress() {
+        let floatParse = parseFloat(fileConvertProgress.style.width);
+        fileConvertProgress.style.width = floatParse + window.plusProgress + '%';
+
+        if (floatParse >= 99) {
+          document.getElementById('progress-container').classList.add('hidden');
+        }
+      }//end incrementProgress
+
+      function  crossfadeEdges(resolve, name, buffer) {
+        Tone.Offline(function(){
+          const player = new Tone.Player(buffer).toMaster();
+          player.fadeIn = fadeLength;
+          player.fadeOut = fadeLength;
+
+          player.start(0);
+          player.stop(length - fadeLength);
+
+          incrementProgress();
+
+        }, length).then(function(buffer){
+          return resolve([name, buffer]);
+        });
+      }//end crossfadeEdges
+
+      function convertToMP3(fileName, buffer) {
+        mp3encoder = new lamejs.Mp3Encoder(2, buffer._buffer.sampleRate, 128);
+        var mp3Data = [];
+
+        left = FloatArray2Int16(buffer.getChannelData(0));
+        right = FloatArray2Int16(buffer.getChannelData(1));
+        sampleBlockSize = 1152;
+
+        for (var i = 0; i < left.length; i += sampleBlockSize) {
+          leftChunk = left.subarray(i, i + sampleBlockSize);
+          rightChunk = right.subarray(i, i + sampleBlockSize);
+          var mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+          if (mp3buf.length > 0) {
+            mp3Data.push(mp3buf);
+          }
+        }
+        var mp3buf = mp3encoder.flush();   //finish writing mp3
+
+        if (mp3buf.length > 0) {
+            mp3Data.push(mp3buf);
+        }
+
+        var blob = new Blob(mp3Data, {type: 'audio/mp3'});
+        var url = URL.createObjectURL(blob);
+
+        downloadMP3(url, fileName);
+
+        incrementProgress();
+      }//end convertToMP3
+    </script>
+  </body>
+</html>
